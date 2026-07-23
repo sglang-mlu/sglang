@@ -152,6 +152,15 @@ jobs:
           fi
           sglang-mlu-ci
 
+      - name: Upload MLU CI result metadata
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mlu-ci-result-pr-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/mlu-ci-logs/result-*.json
+          retention-days: 30
+          if-no-files-found: warn
+
       - name: Upload MLU Jenkins log
         if: always()
         uses: actions/upload-artifact@v4
