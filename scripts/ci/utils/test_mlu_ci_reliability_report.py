@@ -222,6 +222,7 @@ class MluCiReliabilityReportTest(unittest.TestCase):
         self.assertEqual(summary["counts"]["result_metadata"], 2)
         self.assertEqual(summary["classified_reliability"], 0.5)
         self.assertAlmostEqual(summary["metadata_coverage_for_assigned_jobs"], 2 / 3)
+        self.assertTrue(markdown.startswith("<!-- mlu-ci-reliability-report -->\n"))
         self.assertIn("`infrastructure` | `jenkins_connect` | 1", markdown)
         self.assertIn("run 3 attempt 1", markdown)
         self.assertIn("runner not assigned", markdown)

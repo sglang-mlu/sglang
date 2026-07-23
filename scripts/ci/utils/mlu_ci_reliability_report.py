@@ -426,8 +426,7 @@ def render_markdown(summary: dict[str, Any]) -> str:
     counts = summary["counts"]
     latency = summary["latency_seconds"]
     lines = [
-        "<!-- mlu-ci-reliability-report "
-        f"period={summary['period_start']}/{summary['period_end']} -->",
+        "<!-- mlu-ci-reliability-report -->",
         "## MLU CI reliability report",
         "",
         f"Period: `{summary['period_start']}` to `{summary['period_end']}`",

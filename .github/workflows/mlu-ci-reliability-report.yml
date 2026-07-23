@@ -2,13 +2,13 @@ name: MLU CI Reliability Report
 
 on:
   schedule:
-    - cron: '30 0 * * 1' # Weekly on Monday at 00:30 UTC
+    - cron: '17 * * * *' # Hourly PoC report; restore weekly cadence after validation
   workflow_dispatch:
     inputs:
       days:
         description: 'Number of days to include'
         required: false
-        default: '7'
+        default: '1'
         type: string
       issue_number:
         description: 'Report issue number; defaults to the MLU_CI_REPORT_ISSUE_NUMBER repository variable'
@@ -30,7 +30,7 @@ jobs:
       actions: read
       contents: read
     env:
-      REPORT_DAYS: ${{ inputs.days || '7' }}
+      REPORT_DAYS: ${{ inputs.days || '1' }}
     steps:
       - name: Checkout trusted reporter
         uses: actions/checkout@v4
@@ -46,7 +46,7 @@ jobs:
         run: |
           end_time_args=()
           if [[ "${GITHUB_EVENT_NAME}" == "schedule" ]]; then
-            end_time_args=(--end-time "$(date -u +%Y-%m-%dT00:00:00Z)")
+            end_time_args=(--end-time "$(date -u +%Y-%m-%dT%H:00:00Z)")
           fi
           python scripts/ci/utils/mlu_ci_reliability_report.py \
             --repo "${GITHUB_REPOSITORY}" \
