@@ -51,6 +51,27 @@ def record(
 
 
 class MluCiReliabilityReportTest(unittest.TestCase):
+    def test_workflow_query_filters_pull_request_events(self):
+        api = mock.Mock()
+        api.get_json.return_value = {"workflow_runs": []}
+        start = datetime(2026, 7, 1, tzinfo=timezone.utc)
+        end = datetime(2026, 7, 8, tzinfo=timezone.utc)
+
+        self.assertEqual(
+            MODULE.list_workflow_runs(
+                api,
+                "sgl-project/sglang",
+                "pr-test-mlu.yml",
+                start,
+                end,
+                "pull_request",
+            ),
+            [],
+        )
+
+        requested_path = api.get_json.call_args.args[0]
+        self.assertIn("event=pull_request", requested_path)
+
     def test_cross_host_artifact_redirect_does_not_forward_token(self):
         request = urllib.request.Request(
             "https://api.github.com/repos/o/r/actions/artifacts/1/zip",

@@ -123,9 +123,13 @@ def list_workflow_runs(
     workflow: str,
     start: datetime,
     end: datetime,
+    event: str,
 ) -> list[dict[str, Any]]:
     encoded_workflow = urllib.parse.quote(workflow, safe="")
-    query = urllib.parse.urlencode({"created": f">={isoformat(start)}"})
+    query_values = {"created": f">={isoformat(start)}"}
+    if event != "all":
+        query_values["event"] = event
+    query = urllib.parse.urlencode(query_values)
     path = f"/repos/{repo}/actions/workflows/{encoded_workflow}/runs?{query}"
     runs = paginate(api, path, "workflow_runs")
     return [
@@ -197,10 +201,11 @@ def collect_records(
     job_name: str,
     start: datetime,
     end: datetime,
+    event: str = "pull_request",
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     records: list[dict[str, Any]] = []
     collection_errors: list[dict[str, Any]] = []
-    for run in list_workflow_runs(api, repo, workflow, start, end):
+    for run in list_workflow_runs(api, repo, workflow, start, end, event):
         run_id = int(run["id"])
         latest_attempt = max(1, int(run.get("run_attempt", 1)))
         artifacts: Optional[list[dict[str, Any]]] = None
@@ -341,6 +346,7 @@ def build_summary(
     workflow: str,
     start: datetime,
     end: datetime,
+    event: str = "pull_request",
 ) -> dict[str, Any]:
     classifications = Counter(result_bucket(record) for record in records)
     assigned = [record for record in records if record["runner_assigned"]]
@@ -372,6 +378,7 @@ def build_summary(
         "schema_version": 1,
         "repository": repo,
         "workflow": workflow,
+        "event": event,
         "period_start": isoformat(start),
         "period_end": isoformat(end),
         "generated_at": isoformat(datetime.now(timezone.utc)),
@@ -426,6 +433,7 @@ def render_markdown(summary: dict[str, Any]) -> str:
         f"Period: `{summary['period_start']}` to `{summary['period_end']}`",
         "",
         f"Workflow: `{summary['workflow']}` in `{summary['repository']}`",
+        f"Event filter: `{summary['event']}`",
         "",
         "### Coverage",
         "",
@@ -520,6 +528,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repo", default=os.environ.get("GITHUB_REPOSITORY", ""))
     parser.add_argument("--workflow", default=DEFAULT_WORKFLOW)
     parser.add_argument("--job-name", default=DEFAULT_JOB)
+    parser.add_argument(
+        "--event",
+        choices=("pull_request", "push", "workflow_dispatch", "all"),
+        default="pull_request",
+    )
     parser.add_argument("--days", type=int, default=7)
     parser.add_argument(
         "--end-time", help="UTC ISO-8601 report end time; defaults to now"
@@ -550,10 +563,16 @@ def main() -> int:
     try:
         api = GitHubApi(token)
         records, collection_errors = collect_records(
-            api, args.repo, args.workflow, args.job_name, start, end
+            api, args.repo, args.workflow, args.job_name, start, end, args.event
         )
         summary = build_summary(
-            records, collection_errors, args.repo, args.workflow, start, end
+            records,
+            collection_errors,
+            args.repo,
+            args.workflow,
+            start,
+            end,
+            args.event,
         )
     except Exception as exc:
         print(f"Failed to collect MLU CI reliability data: {exc}", file=sys.stderr)
