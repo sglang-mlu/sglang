@@ -40,6 +40,11 @@ on:
         type: string
         default: "ci"
 
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+
 concurrency:
   group: pr-test-mlu-${{ inputs.ref || github.ref }}
   cancel-in-progress: ${{ github.event_name != 'workflow_call' }}
@@ -50,7 +55,7 @@ jobs:
     outputs:
       changes_exist: ${{ steps.filter.outputs.main_package == 'true' || steps.filter.outputs.mlu_backend == 'true' || steps.run-mode.outputs.run_all_tests == 'true' }}
     steps:
-      - name: Checkout code
+      - name: Checkout code for change detection
         uses: actions/checkout@v4
         with:
           ref: ${{ inputs.ref || github.ref }}
@@ -74,7 +79,6 @@ jobs:
               - "python/sglang/!(multimodal_gen)/**/!(*.md)"
               - "python/pyproject_mlu.toml"
               - "test/**/!(*.md)"
-              - "scripts/ci/mlu/**"
               - ".github/workflows/pr-test-mlu.yml"
             mlu_backend:
               - "python/pyproject_mlu.toml"
@@ -83,41 +87,75 @@ jobs:
               - "python/sglang/srt/distributed/device_communicators/mlu_communicator.py"
               - "test/registered/mlu/**"
               - "docs/platforms/cambricon_mlu.md"
-              - "scripts/ci/mlu/**"
               - ".github/workflows/pr-test-mlu.yml"
 
   pr-gate:
     needs: check-changes
     if: needs.check-changes.outputs.changes_exist == 'true'
     uses: ./.github/workflows/pr-gate.yml
-    secrets: inherit
 
   pr-test-mlu:
     needs: [check-changes, pr-gate]
     if: needs.check-changes.outputs.changes_exist == 'true'
-    runs-on: [cambricon]
-    timeout-minutes: 360
+    runs-on:
+      group: mlu-ci
+      labels: mlu-pr
+    timeout-minutes: 120
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.ref || github.ref }}
-          submodules: true
-
+      # Do not checkout the PR on this self-hosted runner. Jenkins
+      # receives and executes the immutable PR SHA in its isolated MLU pod.
       - name: Submit MLU CI task to Cambricon Runner
         env:
           SGLANG_MLU_CI_REPO_NAME: sglang
+          SGLANG_MLU_CI_PR_ID: ${{ github.event.pull_request.number || '' }}
+          SGLANG_MLU_CI_REPO_URL: ${{ github.event.pull_request.head.repo.clone_url || format('{0}/{1}.git', github.server_url, github.repository) }}
+          SGLANG_MLU_CI_GIT_REF: ${{ github.event.pull_request.head.sha || inputs.ref || github.ref_name }}
+          SGLANG_MLU_CI_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           SGLANG_MLU_CI_TRIGGER_TYPE: ${{ inputs.trigger_type || 'ci' }}
           SGLANG_MLU_CI_BRIDGE_URL: http://127.0.0.1:14547
-          SGLANG_MLU_CI_TIMEOUT_SECONDS: "19800"
-          SGLANG_MLU_CI_LOG_DIR: mlu-ci-logs
+          SGLANG_MLU_CI_TIMEOUT_SECONDS: "6600"
+          SGLANG_MLU_CI_LOG_DIR: ${{ runner.temp }}/mlu-ci-logs
+          SGLANG_MLU_CI_OBSERVE_ONLY: ${{ github.event_name == 'pull_request' }}
         run: |
-          bash scripts/ci/mlu/invoke_mlu_ci.sh
+          if ! command -v sglang-mlu-ci >/dev/null 2>&1; then
+            classification="MLU CI failure classification: type=infrastructure, stage=runner_client"
+            mkdir -p "${SGLANG_MLU_CI_LOG_DIR}"
+
+            observe_only=false
+            conclusion=failure
+            annotation=error
+            annotation_title="MLU CI infrastructure failure"
+            policy=failure
+            exit_code=1
+            if [[ "${SGLANG_MLU_CI_OBSERVE_ONLY}" == "true" ]]; then
+              observe_only=true
+              conclusion=success
+              annotation=warning
+              annotation_title="MLU CI infrastructure warning"
+              policy="warning (observe-only; GitHub job remains successful)"
+              exit_code=0
+            fi
+
+            echo "::${annotation} title=${annotation_title}::${classification}"
+            {
+              echo "## MLU CI result"
+              echo
+              echo "- Status: \`error\`"
+              echo "- Failure type: \`infrastructure\`"
+              echo "- Failure stage: \`runner_client\`"
+              echo "- GitHub conclusion policy: ${policy}"
+            } >> "${GITHUB_STEP_SUMMARY}"
+            printf '{\n  "failure_stage": "runner_client",\n  "failure_type": "infrastructure",\n  "github_conclusion": "%s",\n  "observe_only": %s,\n  "status": "error",\n  "task_id": "runner-client-%s-%s"\n}\n' \
+              "${conclusion}" "${observe_only}" "${GITHUB_RUN_ID}" "${GITHUB_RUN_ATTEMPT}" \
+              > "${SGLANG_MLU_CI_LOG_DIR}/result-runner-client-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.json"
+            exit "${exit_code}"
+          fi
+          sglang-mlu-ci
 
       - name: Upload MLU Jenkins log
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: mlu-jenkins-log-pr-${{ github.run_id }}-${{ github.run_attempt }}
-          path: mlu-ci-logs/
+          path: ${{ runner.temp }}/mlu-ci-logs/
           if-no-files-found: warn
