@@ -41,6 +41,7 @@ from sglang.srt.utils import (
     is_flashinfer_available,
     is_gfx1250_supported,
     is_hip,
+    is_mlu,
     is_musa,
     is_npu,
     is_xpu,
@@ -51,6 +52,7 @@ _is_flashinfer_available = is_flashinfer_available()
 _is_hip = is_hip()
 _is_musa = is_musa()
 _is_npu = is_npu()
+_is_mlu = is_mlu()
 _use_aiter = get_bool_env_var("SGLANG_USE_AITER") and _is_hip
 _is_cpu_amx_available = cpu_has_amx_support()
 _is_cpu = is_cpu()
@@ -183,6 +185,9 @@ logger = logging.getLogger(__name__)
 if _is_npu:
     import torch_npu
     from sgl_kernel_npu.norm.add_rmsnorm_bias import add_gemma_rms_norm
+
+if _is_mlu:
+    import torch_mlu_ops
 
 _NPU_GEMMA_RMS_NORM_TRITON_MAX_HIDDEN_SIZE = 5120
 
@@ -646,6 +651,54 @@ class RMSNorm(BaseFusedOp):
             )
             return out, residual_out
         return torch_npu.npu_rms_norm(x, self.weight.data, self.variance_epsilon)[0]
+
+    def forward_mlu(
+        self,
+        x: torch.Tensor,
+        residual: Optional[torch.Tensor] = None,
+        post_residual_addition: Optional[torch.Tensor] = None,
+        quant_linear: Optional[nn.Module] = None,
+    ) -> Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]:
+        # Fall back for options and input layouts unsupported by the fused kernel.
+        if (
+            self.variance_size_override is not None
+            or self.fp32_residual
+            or self.cast_x_before_out_mul
+            or self.override_orig_dtype is not None
+            or x.stride(-1) != 1
+            or (residual is not None and residual.stride(-1) != 1)
+        ):
+            return self.forward_native(
+                x, residual, post_residual_addition, quant_linear
+            )
+        if x.numel() == 0:
+            if residual is not None:
+                if post_residual_addition is not None:
+                    residual = residual + post_residual_addition
+                return x, residual
+            return x
+        if residual is not None:
+            if post_residual_addition is not None:
+                residual = residual + post_residual_addition
+            out, residual_out = torch_mlu_ops.fused_rms_norm(
+                x,
+                residual,
+                self.weight.data,
+                None,
+                None,
+                self.variance_epsilon,
+                True,
+            )
+            return out, residual_out
+        return torch_mlu_ops.fused_rms_norm(
+            x,
+            None,
+            self.weight.data,
+            None,
+            None,
+            self.variance_epsilon,
+            False,
+        )
 
     def forward_aiter(
         self,
