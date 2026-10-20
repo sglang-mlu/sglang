@@ -515,6 +515,12 @@
         "cooldown_interval_minutes": 60,
         "reason": "custom override"
     },
+    "chenxb002": {
+        "can_tag_run_ci_label": true,
+        "can_rerun_failed_ci": true,
+        "cooldown_interval_minutes": 0,
+        "reason": "MLU CI validation in sglang-mlu/sglang only"
+    },
     "chenxu214": {
         "can_tag_run_ci_label": true,
         "can_rerun_failed_ci": true,
